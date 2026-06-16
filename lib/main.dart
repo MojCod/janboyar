@@ -181,8 +181,10 @@ class ScannerPage extends StatefulWidget {
 }
 
 class _ScannerPageState extends State<ScannerPage> {
-  final MobileScannerController controller = MobileScannerController();
-  bool isScanning = true;
+  final MobileScannerController controller = MobileScannerController(
+    formats: [BarcodeFormat.ean13], // فقط بارکد ۱۳ رقمی کالاها
+  );
+  bool _isScanning = true;
 
   @override
   void dispose() {
@@ -214,29 +216,52 @@ class _ScannerPageState extends State<ScannerPage> {
           MobileScanner(
             controller: controller,
             onDetect: (capture) async {
-              if (!isScanning) return;
-              final barcode = capture.barcodes.first.rawValue;
-              if (barcode != null && barcode.isNotEmpty) {
-                isScanning = false;
+              if (!_isScanning) return;
+              try {
+                final barcodes = capture.barcodes;
+                if (barcodes.isEmpty) return;
+                final rawValue = barcodes.first.rawValue;
+                if (rawValue == null || rawValue.isEmpty) return;
+
+                // بررسی اینکه دقیقاً ۱۳ رقمی باشه (اختیاری)
+                if (rawValue.length != 13) {
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('بارکد نامعتبر! فقط بارکد ۱۳ رقمی کالاها قابل قبول است.'),
+                        duration: Duration(seconds: 2),
+                      ),
+                    );
+                  }
+                  return;
+                }
+
+                _isScanning = false;
                 final hasVibrator = await Vibration.hasVibrator();
                 if (hasVibrator == true) {
-                  await Vibration.vibrate(duration: 100);
+                  await Vibration.vibrate(duration: 200);
                 }
+
                 if (!mounted) return;
                 final selectedDate = await showDialog<Jalali>(
                   context: context,
                   builder: (context) => const DatePickerDialog(),
                 );
+
                 if (!mounted) return;
                 if (selectedDate != null) {
-                  final dateString = '${selectedDate.year}/${selectedDate.month.toString().padLeft(2, '0')}/${selectedDate.day.toString().padLeft(2, '0')}';
+                  final dateString =
+                      '${selectedDate.year}/${selectedDate.month.toString().padLeft(2, '0')}/${selectedDate.day.toString().padLeft(2, '0')}';
                   if (mounted) {
-                    Navigator.pop(context, {'barcode': barcode, 'date': dateString});
+                    Navigator.pop(context, {'barcode': rawValue, 'date': dateString});
                   }
                 } else {
-                  if (mounted) {
-                    Navigator.pop(context);
-                  }
+                  if (mounted) Navigator.pop(context);
+                }
+              } catch (e) {
+                print('Scanner error: $e');
+                if (mounted) {
+                  setState(() => _isScanning = true);
                 }
               }
             },
@@ -260,7 +285,7 @@ class _ScannerPageState extends State<ScannerPage> {
                   borderRadius: BorderRadius.circular(20),
                 ),
                 child: const Text(
-                  'بارکد را در قاب قرار دهید',
+                  'بارکد ۱۳ رقمی کالا را اسکن کنید',
                   style: TextStyle(color: Colors.white),
                 ),
               ),
