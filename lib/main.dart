@@ -1,3 +1,4 @@
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:google_ml_kit/google_ml_kit.dart';
@@ -221,11 +222,36 @@ class _ScannerPageState extends State<ScannerPage> {
 
   void _startScanning() {
     if (!_isInitialized) return;
+    
     _controller.startImageStream((CameraImage image) async {
       if (!_isScanning) return;
+      
       try {
-        final inputImage = InputImage.fromCameraImage(image);
+        // روش ساده برای تبدیل تصویر با Uint8List
+        int totalBytes = 0;
+        for (final Plane plane in image.planes) {
+          totalBytes += plane.bytes.length;
+        }
+        
+        final Uint8List allBytes = Uint8List(totalBytes);
+        int offset = 0;
+        for (final Plane plane in image.planes) {
+          allBytes.setRange(offset, offset + plane.bytes.length, plane.bytes);
+          offset += plane.bytes.length;
+        }
+        
+        final InputImage inputImage = InputImage.fromBytes(
+          bytes: allBytes,
+          metadata: InputImageMetadata(
+            size: Size(image.width.toDouble(), image.height.toDouble()),
+            rotation: InputImageRotation.rotation0deg,
+            format: InputImageFormat.nv21,
+            bytesPerRow: image.planes[0].bytesPerRow,
+          ),
+        );
+        
         final barcodes = await _barcodeScanner.processImage(inputImage);
+        
         if (barcodes.isNotEmpty) {
           final rawValue = barcodes.first.rawValue;
           if (rawValue != null && rawValue.isNotEmpty) {
@@ -238,12 +264,14 @@ class _ScannerPageState extends State<ScannerPage> {
             }
 
             if (!mounted) return;
+            
             final selectedDate = await showDialog<Jalali>(
               context: context,
               builder: (context) => const DatePickerDialog(),
             );
 
             if (!mounted) return;
+            
             if (selectedDate != null) {
               final dateString =
                   '${selectedDate.year}/${selectedDate.month.toString().padLeft(2, '0')}/${selectedDate.day.toString().padLeft(2, '0')}';
@@ -258,6 +286,12 @@ class _ScannerPageState extends State<ScannerPage> {
         }
       } catch (e) {
         print('Scan error: $e');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('خطا در اسکن، دوباره تلاش کنید')),
+          );
+          _isScanning = true;
+        }
       }
     });
   }
