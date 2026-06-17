@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:google_ml_kit/google_ml_kit.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:vibration_plus/vibration_plus.dart';
+import 'package:vibration/vibration.dart';
 import 'package:shamsi_date/shamsi_date.dart';
 
 void main() async {
@@ -227,7 +227,6 @@ class _ScannerPageState extends State<ScannerPage> {
       if (!_isScanning) return;
       
       try {
-        // روش ساده برای تبدیل تصویر با Uint8List
         int totalBytes = 0;
         for (final Plane plane in image.planes) {
           totalBytes += plane.bytes.length;
@@ -258,9 +257,9 @@ class _ScannerPageState extends State<ScannerPage> {
             _isScanning = false;
             _controller.stopImageStream();
 
-            final hasVibrator = await VibrationPlus.hasVibrator();
+            final hasVibrator = await Vibration.hasVibrator();
             if (hasVibrator == true) {
-              await VibrationPlus.vibrate(duration: 200);
+              await Vibration.vibrate(duration: 200);
             }
 
             if (!mounted) return;
