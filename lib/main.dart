@@ -1,15 +1,20 @@
 import 'package:flutter/material.dart';
-import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:camera/camera.dart';
+import 'package:google_ml_kit/google_ml_kit.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vibration/vibration.dart';
 import 'package:shamsi_date/shamsi_date.dart';
 
-void main() {
-  runApp(const JanboyarApp());
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  final cameras = await availableCameras();
+  final firstCamera = cameras.first;
+  runApp(JanboyarApp(camera: firstCamera));
 }
 
 class JanboyarApp extends StatelessWidget {
-  const JanboyarApp({super.key});
+  final CameraDescription camera;
+  const JanboyarApp({super.key, required this.camera});
 
   @override
   Widget build(BuildContext context) {
@@ -17,13 +22,14 @@ class JanboyarApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       title: 'جانبویار',
       theme: ThemeData(primarySwatch: Colors.blue, useMaterial3: true),
-      home: const HomePage(),
+      home: HomePage(camera: camera),
     );
   }
 }
 
 class HomePage extends StatefulWidget {
-  const HomePage({super.key});
+  final CameraDescription camera;
+  const HomePage({super.key, required this.camera});
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -160,7 +166,9 @@ class _HomePageState extends State<HomePage> {
         onPressed: () async {
           final result = await Navigator.push(
             context,
-            MaterialPageRoute(builder: (_) => const ScannerPage()),
+            MaterialPageRoute(
+              builder: (_) => ScannerPage(camera: widget.camera),
+            ),
           );
           if (result != null && mounted) {
             addItemWithDate(result['barcode'] as String, result['date'] as String);
@@ -174,21 +182,90 @@ class _HomePageState extends State<HomePage> {
 }
 
 class ScannerPage extends StatefulWidget {
-  const ScannerPage({super.key});
+  final CameraDescription camera;
+  const ScannerPage({super.key, required this.camera});
 
   @override
   State<ScannerPage> createState() => _ScannerPageState();
 }
 
 class _ScannerPageState extends State<ScannerPage> {
-  final MobileScannerController controller = MobileScannerController(
-    formats: [BarcodeFormat.ean13], // فقط بارکد ۱۳ رقمی کالاها
-  );
+  late CameraController _controller;
   bool _isScanning = true;
+  bool _isInitialized = false;
+  final BarcodeScanner _barcodeScanner = GoogleMlKit.vision.barcodeScanner();
+
+  @override
+  void initState() {
+    super.initState();
+    _initCamera();
+  }
+
+  Future<void> _initCamera() async {
+    try {
+      _controller = CameraController(widget.camera, ResolutionPreset.medium);
+      await _controller.initialize();
+      if (!mounted) return;
+      setState(() => _isInitialized = true);
+      _startScanning();
+    } catch (e) {
+      print('Camera init error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('خطا در دسترسی به دوربین')),
+        );
+        Navigator.pop(context);
+      }
+    }
+  }
+
+  void _startScanning() {
+    if (!_isInitialized) return;
+    _controller.startImageStream((CameraImage image) async {
+      if (!_isScanning) return;
+      try {
+        final inputImage = InputImage.fromCameraImage(image);
+        final barcodes = await _barcodeScanner.processImage(inputImage);
+        if (barcodes.isNotEmpty) {
+          final rawValue = barcodes.first.rawValue;
+          if (rawValue != null && rawValue.isNotEmpty) {
+            _isScanning = false;
+            _controller.stopImageStream();
+
+            final hasVibrator = await Vibration.hasVibrator();
+            if (hasVibrator == true) {
+              await Vibration.vibrate(duration: 200);
+            }
+
+            if (!mounted) return;
+            final selectedDate = await showDialog<Jalali>(
+              context: context,
+              builder: (context) => const DatePickerDialog(),
+            );
+
+            if (!mounted) return;
+            if (selectedDate != null) {
+              final dateString =
+                  '${selectedDate.year}/${selectedDate.month.toString().padLeft(2, '0')}/${selectedDate.day.toString().padLeft(2, '0')}';
+              if (mounted) {
+                Navigator.pop(context, {'barcode': rawValue, 'date': dateString});
+              }
+            } else {
+              _isScanning = true;
+              _controller.startImageStream((CameraImage image) {});
+            }
+          }
+        }
+      } catch (e) {
+        print('Scan error: $e');
+      }
+    });
+  }
 
   @override
   void dispose() {
-    controller.dispose();
+    _controller.dispose();
+    _barcodeScanner.close();
     super.dispose();
   }
 
@@ -198,101 +275,39 @@ class _ScannerPageState extends State<ScannerPage> {
       appBar: AppBar(
         title: const Text('اسکن بارکد'),
         centerTitle: true,
-        actions: [
-          IconButton(
-            icon: ValueListenableBuilder(
-              valueListenable: controller,
-              builder: (context, state, child) {
-                final isOn = state.torchState == TorchState.on;
-                return Icon(isOn ? Icons.flash_on : Icons.flash_off);
-              },
-            ),
-            onPressed: () => controller.toggleTorch(),
-          ),
-        ],
       ),
-      body: Stack(
-        children: [
-          MobileScanner(
-            controller: controller,
-            onDetect: (capture) async {
-              if (!_isScanning) return;
-              try {
-                final barcodes = capture.barcodes;
-                if (barcodes.isEmpty) return;
-                final rawValue = barcodes.first.rawValue;
-                if (rawValue == null || rawValue.isEmpty) return;
-
-                // بررسی اینکه دقیقاً ۱۳ رقمی باشه (اختیاری)
-                if (rawValue.length != 13) {
-                  if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('بارکد نامعتبر! فقط بارکد ۱۳ رقمی کالاها قابل قبول است.'),
-                        duration: Duration(seconds: 2),
+      body: !_isInitialized
+          ? const Center(child: CircularProgressIndicator())
+          : Stack(
+              children: [
+                CameraPreview(_controller),
+                Container(
+                  decoration: BoxDecoration(
+                    border: Border.all(color: Colors.white, width: 3),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  margin: const EdgeInsets.all(60),
+                ),
+                Positioned(
+                  bottom: 50,
+                  left: 0,
+                  right: 0,
+                  child: Center(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                      decoration: BoxDecoration(
+                        color: Colors.black54,
+                        borderRadius: BorderRadius.circular(20),
                       ),
-                    );
-                  }
-                  return;
-                }
-
-                _isScanning = false;
-                final hasVibrator = await Vibration.hasVibrator();
-                if (hasVibrator == true) {
-                  await Vibration.vibrate(duration: 200);
-                }
-
-                if (!mounted) return;
-                final selectedDate = await showDialog<Jalali>(
-                  context: context,
-                  builder: (context) => const DatePickerDialog(),
-                );
-
-                if (!mounted) return;
-                if (selectedDate != null) {
-                  final dateString =
-                      '${selectedDate.year}/${selectedDate.month.toString().padLeft(2, '0')}/${selectedDate.day.toString().padLeft(2, '0')}';
-                  if (mounted) {
-                    Navigator.pop(context, {'barcode': rawValue, 'date': dateString});
-                  }
-                } else {
-                  if (mounted) Navigator.pop(context);
-                }
-              } catch (e) {
-                print('Scanner error: $e');
-                if (mounted) {
-                  setState(() => _isScanning = true);
-                }
-              }
-            },
-          ),
-          Container(
-            decoration: BoxDecoration(
-              border: Border.all(color: Colors.white, width: 3),
-              borderRadius: BorderRadius.circular(20),
-            ),
-            margin: const EdgeInsets.all(60),
-          ),
-          Positioned(
-            bottom: 50,
-            left: 0,
-            right: 0,
-            child: Center(
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                decoration: BoxDecoration(
-                  color: Colors.black54,
-                  borderRadius: BorderRadius.circular(20),
+                      child: const Text(
+                        'بارکد کالا را اسکن کنید',
+                        style: TextStyle(color: Colors.white),
+                      ),
+                    ),
+                  ),
                 ),
-                child: const Text(
-                  'بارکد ۱۳ رقمی کالا را اسکن کنید',
-                  style: TextStyle(color: Colors.white),
-                ),
-              ),
+              ],
             ),
-          ),
-        ],
-      ),
     );
   }
 }
