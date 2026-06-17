@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:google_ml_kit/google_ml_kit.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:vibration/vibration.dart';
+import 'package:vibration_plus/vibration_plus.dart';
 import 'package:shamsi_date/shamsi_date.dart';
 
 void main() async {
@@ -258,9 +258,9 @@ class _ScannerPageState extends State<ScannerPage> {
             _isScanning = false;
             _controller.stopImageStream();
 
-            final hasVibrator = await Vibration.hasVibrator();
+            final hasVibrator = await VibrationPlus.hasVibrator();
             if (hasVibrator == true) {
-              await Vibration.vibrate(duration: 200);
+              await VibrationPlus.vibrate(duration: 200);
             }
 
             if (!mounted) return;
